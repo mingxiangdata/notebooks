@@ -44,8 +44,7 @@ def make_es_index_snippets(es_client, passages_dset, index_name="english_wiki_ki
     successes = 0
 
     def passage_generator():
-        for passage in passages_dset:
-            yield passage
+        yield from passages_dset
 
     # create the ES index
     for ok, action in streaming_bulk(client=es_client, index=index_name, actions=passage_generator(),):
@@ -100,7 +99,13 @@ class ELI5DatasetQARetriver(Dataset):
         example = self.data[idx]
         question = example["title"]
         if self.training:
-            answers = [a for i, (a, sc) in enumerate(zip(example["answers"]["text"], example["answers"]["score"]))]
+            answers = [
+                a
+                for a, sc in zip(
+                    example["answers"]["text"], example["answers"]["score"]
+                )
+            ]
+
             answer_tab = choice(answers).split(" ")
             start_idx = randint(0, max(0, len(answer_tab) - self.min_length))
             answer_span = " ".join(answer_tab[start_idx:])
@@ -139,8 +144,7 @@ class RetrievalQAEmbedder(torch.nn.Module):
             def partial_encode(*inputs):
                 encoder_outputs = self.sent_encoder.encoder(inputs[0], attention_mask=inputs[1], head_mask=head_mask,)
                 sequence_output = encoder_outputs[0]
-                pooled_output = self.sent_encoder.pooler(sequence_output)
-                return pooled_output
+                return self.sent_encoder.pooler(sequence_output)
 
             # run embedding layer on everything at once
             embedding_output = self.sent_encoder.embeddings(
@@ -170,8 +174,7 @@ class RetrievalQAEmbedder(torch.nn.Module):
         compare_scores = torch.mm(q_reps, a_reps.t())
         loss_qa = self.ce_loss(compare_scores, torch.arange(compare_scores.shape[1]).to(device))
         loss_aq = self.ce_loss(compare_scores.t(), torch.arange(compare_scores.shape[0]).to(device))
-        loss = (loss_qa + loss_aq) / 2
-        return loss
+        return (loss_qa + loss_aq) / 2
 
 
 def make_qa_retriever_model(model_name="google/bert_uncased_L-8_H-512_A-8", from_file=None, device="cuda:0"):
@@ -312,8 +315,8 @@ def train_qa_retriever(qar_model, qar_tokenizer, qar_train_dset, qar_valid_dset,
             "optimizer": qar_optimizer.state_dict(),
             "scheduler": qar_scheduler.state_dict(),
         }
-        print("Saving model {}".format(qar_args.model_save_name))
-        torch.save(m_save_dict, "{}_{}.pth".format(qar_args.model_save_name, e))
+        print(f"Saving model {qar_args.model_save_name}")
+        torch.save(m_save_dict, f"{qar_args.model_save_name}_{e}.pth")
         eval_loss = evaluate_qa_retriever(qar_model, qar_valid_dset, qar_tokenizer, qar_args)
         print("Evaluation loss epoch {:4d}: {:.3f}".format(e, eval_loss))
 
@@ -329,7 +332,7 @@ class ELI5DatasetS2S(Dataset):
         self.data = examples_array
         self.make_doc_function = make_doc_fun
         self.document_cache = {} if document_cache is None else document_cache
-        assert not (make_doc_fun is None and document_cache is None)
+        assert make_doc_fun is not None or document_cache is not None
         # make index of specific question-answer pairs from multi-answers
         if self.training:
             self.qa_id_list = [
@@ -353,9 +356,8 @@ class ELI5DatasetS2S(Dataset):
         if self.make_doc_function is not None:
             self.document_cache[q_id] = self.document_cache.get(q_id, self.make_doc_function(example["title"]))
         document = self.document_cache[q_id]
-        in_st = "question: {} context: {}".format(
-            question.lower().replace(" --t--", "").strip(), document.lower().strip(),
-        )
+        in_st = f'question: {question.lower().replace(" --t--", "").strip()} context: {document.lower().strip()}'
+
         out_st = answer
         return (in_st, out_st)
 
@@ -387,13 +389,12 @@ def make_qa_s2s_batch(qa_list, tokenizer, max_len=64, max_a_len=360, device="cud
     )
     lm_labels = a_ids[:, 1:].contiguous().clone()
     lm_labels[a_mask[:, 1:].contiguous() == 0] = -100
-    model_inputs = {
+    return {
         "input_ids": q_ids,
         "attention_mask": q_mask,
         "decoder_input_ids": a_ids[:, :-1].contiguous(),
         "lm_labels": lm_labels,
     }
-    return model_inputs
 
 
 def train_qa_s2s_epoch(model, dataset, tokenizer, optimizer, scheduler, args, e=0, curriculum=False):
@@ -485,9 +486,9 @@ def train_qa_s2s(qa_s2s_model, qa_s2s_tokenizer, s2s_train_dset, s2s_valid_dset,
             "optimizer": s2s_optimizer.state_dict(),
             "scheduler": s2s_scheduler.state_dict(),
         }
-        print("Saving model {}".format(s2s_args.model_save_name))
+        print(f"Saving model {s2s_args.model_save_name}")
         eval_qa_s2s_epoch(qa_s2s_model, s2s_valid_dset, qa_s2s_tokenizer, s2s_args)
-        torch.save(m_save_dict, "{}_{}.pth".format(s2s_args.model_save_name, e))
+        torch.save(m_save_dict, f"{s2s_args.model_save_name}_{e}.pth")
 
 
 # generate answer from input "question: ... context: <p> ..."
@@ -566,7 +567,12 @@ def make_qa_dense_index(
     fp = np.memmap(index_name, dtype=dtype, mode="w+", shape=(passages_dset.num_rows, 128))
     n_batches = math.ceil(passages_dset.num_rows / batch_size)
     for i in range(n_batches):
-        passages = [p for p in passages_dset[i * batch_size : (i + 1) * batch_size]["passage_text"]]
+        passages = list(
+            passages_dset[i * batch_size : (i + 1) * batch_size][
+                "passage_text"
+            ]
+        )
+
         reps = embed_passages_for_retrieval(passages, tokenizer, qa_embedder, max_length, device)
         fp[i * batch_size : (i + 1) * batch_size] = reps
         if i % 50 == 0:

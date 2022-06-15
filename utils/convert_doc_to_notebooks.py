@@ -104,7 +104,13 @@ def process_titles(lines):
     title_levels = {}
     new_lines = []
     for line in lines:
-        if len(new_lines) > 0 and len(line) >= len(new_lines[-1]) and len(set(line)) == 1 and line[0] in title_chars and line != "::":
+        if (
+            new_lines
+            and len(line) >= len(new_lines[-1])
+            and len(set(line)) == 1
+            and line[0] in title_chars
+            and line != "::"
+        ):
             char = line[0]
             level = title_levels.get(char, len(title_levels) + 1)
             if level not in title_levels:
@@ -412,7 +418,7 @@ def convert_rst_file_to_notebook(
     blocks = split_blocks(lines)
     cells = [code_cell(INSTALL_CODE)]
     for block,block_type in blocks:
-        if block_type == 'title' or block_type == 'prose':
+        if block_type in ['title', 'prose']:
             block = convert_table(convert_rst_formatting(convert_rst_links(block)))
             cells.append(markdown_cell(block))
         elif block_type == 'anchor':
@@ -448,7 +454,7 @@ def convert_rst_file_to_notebook(
             block = convert_rst_formatting(convert_rst_links(block))
             block = convert_to_note(block, block_type)
             cells.append(markdown_cell(block))
-            
+
     notebook = create_notebook(cells)
     nbformat.write(notebook, notebook_fname, version=4)
 
@@ -460,7 +466,7 @@ def convert_all_tutorials(path_to_docs=None, path_to_dest=None):
     for folder in ["pytorch", "tensorflow"]:
         os.makedirs(os.path.join(path_to_dest, folder), exist_ok=True)
     for file in TUTORIAL_FILES:
-        notebook_name = os.path.splitext(file)[0] + ".ipynb"
+        notebook_name = f"{os.path.splitext(file)[0]}.ipynb"
         doc_file = os.path.join(path_to_docs, file)
         notebook_file = os.path.join(path_to_dest, notebook_name)
         convert_rst_file_to_notebook(doc_file, notebook_file, origin_folder=path_to_docs, dest_folder=path_to_dest)
